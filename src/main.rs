@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::Semaphore;
 use aws_sdk_s3::{Client, config::Builder as ConfigBuilder};
+use aws_sdk_s3::config::BehaviorVersion;
 use aws_sdk_s3::config::Region;
 use aws_credential_types::Credentials;
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,8 @@ enum Commands {
     prefix: String,
     #[arg(long, default_value = "60", help = "Test duration in seconds")]
     duration: u64,
+    #[arg(long, help = "Region (default: eu-de)")]
+    region: Option<String>,
     #[arg(long, help = "Select which tests to run (repeat for multiple). Available tests: small_files_1kb, small_files_64kb, medium_files_1mb, medium_files_16mb, large_files_100mb, large_files_1gb, mixed_workload", value_delimiter = None, num_args = 0.., default_value = None)]
     tests: Option<Vec<String>>,
     #[arg(long, default_value = "false", help = "Skip cleanup after tests")]
@@ -163,15 +166,16 @@ struct BenchmarkSuite {
 }
 
 impl BenchmarkSuite {
-    async fn new(endpoint: &str, access_key: &str, secret_key: &str, bucket: &str, prefix: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    async fn new(endpoint: &str, access_key: &str, secret_key: &str, bucket: &str, prefix: &str, region: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
         // Configure S3 client for IBM COS
         let credentials = Credentials::new(access_key, secret_key, None, None, "benchmark");
         
         let config = ConfigBuilder::new()
             .endpoint_url(endpoint)
-            .region(Region::new("eu-de")) // IBM COS doesn't care about region for S3 API
+            .region(Region::new(region.unwrap_or_else(|| "eu-west-3".to_string())))
             .credentials_provider(credentials)
-            .force_path_style(true)
+            .force_path_style(false)
+            .behavior_version(BehaviorVersion::v2023_11_09())
             .build();
 
         let client = Client::from_conf(config);
@@ -317,54 +321,98 @@ impl BenchmarkSuite {
         let end_time = start_time + Duration::from_secs(duration);
         
         while Instant::now() < end_time {
-            let tasks: Vec<_> = (0..concurrency).map(|_| {
+            if concurrency == 1 {
                 let client = self.client.clone();
                 let bucket = self.bucket.clone();
                 let prefix = self.prefix.clone();
                 let data = data.clone();
-                let semaphore = semaphore.clone();
-                
-                tokio::spawn(async move {
-                    let _permit = semaphore.acquire().await.unwrap();
-                    let key = format!("{}/small_file_{}", prefix, Uuid::new_v4());
-                    
-                    let op_start = Instant::now();
-                    
-                    // Upload
-                    let upload_result = client
-                        .put_object()
-                        .bucket(&bucket)
-                        .key(&key)
-                        .body(data.into())
-                        .send()
-                        .await;
-                    
-                    if upload_result.is_err() {
-                        return (0, true, op_start.elapsed());
-                    }
-                    
-                    // Download
-                    let download_result = client
-                        .get_object()
-                        .bucket(&bucket)
-                        .key(&key)
-                        .send()
-                        .await;
-                    
-                    let success = download_result.is_ok();
-                    (1, !success, op_start.elapsed())
-                })
-            }).collect();
-            
-            for task in tasks {
-                let (ops, error, latency) = task.await.unwrap();
-                operations += ops;
-                if error { errors += 1; }
-                latencies.push(latency.as_millis() as f64);
-            }
-            
-            if operations % 100 == 0 {
-                println!("    Progress: {} operations", operations);
+                let key = format!("{}/small_file_{}", prefix, Uuid::new_v4());
+
+                let op_start = Instant::now();
+
+                // Upload
+                let upload_result = client
+                    .put_object()
+                    .bucket(&bucket)
+                    .key(&key)
+                    .body(data.into())
+                    .send()
+                    .await;
+
+                if upload_result.is_err() {
+                    errors += 1;
+                    latencies.push(op_start.elapsed().as_millis() as f64);
+                    operations += 1;
+                    continue;
+                }
+
+                // Download
+                let download_result = client
+                    .get_object()
+                    .bucket(&bucket)
+                    .key(&key)
+                    .send()
+                    .await;
+
+                if download_result.is_err() {
+                    errors += 1;
+                }
+                latencies.push(op_start.elapsed().as_millis() as f64);
+                operations += 1;
+
+                if operations % 100 == 0 {
+                    println!("    Progress: {} operations", operations);
+                }
+            } else {
+                let tasks: Vec<_> = (0..concurrency).map(|_| {
+                    let client = self.client.clone();
+                    let bucket = self.bucket.clone();
+                    let prefix = self.prefix.clone();
+                    let data = data.clone();
+                    let semaphore = semaphore.clone();
+
+                    tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await.unwrap();
+                        let key = format!("{}/small_file_{}", prefix, Uuid::new_v4());
+
+                        let op_start = Instant::now();
+
+                        // Upload
+                        let upload_result = client
+                            .put_object()
+                            .bucket(&bucket)
+                            .key(&key)
+                            .body(data.into())
+                            .send()
+                            .await;
+
+                        if upload_result.is_err() {
+                            return (0, true, op_start.elapsed());
+                        }
+
+                        // Download
+                        let download_result = client
+                            .get_object()
+                            .bucket(&bucket)
+                            .key(&key)
+                            .send()
+                            .await;
+
+                        let success = download_result.is_ok();
+                        (1, !success, op_start.elapsed())
+                    })
+                }).collect();
+
+                for task in tasks {
+                    let (ops, error, latency) = task.await.unwrap();
+                    operations += ops;
+                    if error { errors += 1; }
+                    latencies.push(latency.as_millis() as f64);
+                }
+
+                if operations % 100 == 0 {
+                    println!("    Progress: {} operations", operations);
+                }
             }
         }
         
@@ -619,9 +667,10 @@ impl BenchmarkSuite {
         let upload_concurrency = 50;
         let download_concurrency = 50;
         
-        let upload_semaphore = Arc::new(Semaphore::new(upload_concurrency));
-        let download_semaphore = Arc::new(Semaphore::new(download_concurrency));
-        
+    let upload_semaphore = Arc::new(Semaphore::new(upload_concurrency));
+    let download_semaphore = Arc::new(Semaphore::new(download_concurrency));
+
+    let uploaded_keys = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let mut upload_latencies = Vec::new();
     let mut download_latencies = Vec::new();
     let mut upload_ops = 0u64;
@@ -637,16 +686,17 @@ impl BenchmarkSuite {
             let prefix = self.prefix.clone();
             let upload_semaphore = upload_semaphore.clone();
             let data = data.clone();
-            
+            let uploaded_keys = uploaded_keys.clone();
+
             async move {
                 let mut ops = 0u64;
                 let mut latencies = Vec::new();
                 let mut errors = 0u64;
-                
+
                 while Instant::now() < end_time {
                     let _permit = upload_semaphore.acquire().await.unwrap();
                     let key = format!("{}/parallel_upload_{}", prefix, Uuid::new_v4());
-                    
+
                     let op_start = Instant::now();
                     let result = client
                         .put_object()
@@ -655,12 +705,18 @@ impl BenchmarkSuite {
                         .body(data.clone().into())
                         .send()
                         .await;
-                    
-                    if result.is_err() { errors += 1; }
+
+                    if result.is_ok() {
+                        // Store key for download
+                        let mut keys = uploaded_keys.lock().await;
+                        keys.push(key.clone());
+                    } else {
+                        errors += 1;
+                    }
                     ops += 1;
                     latencies.push(op_start.elapsed().as_millis() as f64);
                 }
-                
+
                 (ops, latencies, errors)
             }
         });
@@ -668,21 +724,29 @@ impl BenchmarkSuite {
         let download_tasks = tokio::spawn({
             let client = self.client.clone();
             let bucket = self.bucket.clone();
-            let prefix = self.prefix.clone();
             let download_semaphore = download_semaphore.clone();
-            
+            let uploaded_keys = uploaded_keys.clone();
+
             async move {
                 let mut ops = 0u64;
                 let mut latencies = Vec::new();
                 let mut errors = 0u64;
-                
+
                 // Give uploads a head start
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                
+
                 while Instant::now() < end_time {
                     let _permit = download_semaphore.acquire().await.unwrap();
-                    let key = format!("{}/parallel_upload_{}", prefix, Uuid::new_v4());
-                    
+                    // Get a key from the uploaded_keys queue
+                    let key = {
+                        let mut keys = uploaded_keys.lock().await;
+                        if keys.is_empty() {
+                            // No keys available, skip this iteration
+                            continue;
+                        }
+                        keys.remove(0)
+                    };
+
                     let op_start = Instant::now();
                     let result = client
                         .get_object()
@@ -690,12 +754,12 @@ impl BenchmarkSuite {
                         .key(&key)
                         .send()
                         .await;
-                    
+
                     if result.is_err() { errors += 1; }
                     ops += 1;
                     latencies.push(op_start.elapsed().as_millis() as f64);
                 }
-                
+
                 (ops, latencies, errors)
             }
         });
@@ -943,8 +1007,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             duration,
             tests,
             skip_cleanup,
+        region,
         } => {
-            let benchmark = BenchmarkSuite::new(&endpoint, &access_key, &secret_key, &bucket, &prefix).await?;
+            let benchmark = BenchmarkSuite::new(&endpoint, &access_key, &secret_key, &bucket, &prefix, region).await?;
 
             println!("🏗️ IBM Cloud Object Storage Benchmark Starting...");
             println!("📍 Endpoint: {}", endpoint);
@@ -1018,7 +1083,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::Cleanup { endpoint, access_key, secret_key, bucket, prefix } => {
-            let benchmark = BenchmarkSuite::new(&endpoint, &access_key, &secret_key, &bucket, &prefix).await?;
+            let benchmark = BenchmarkSuite::new(&endpoint, &access_key, &secret_key, &bucket, &prefix, None).await?;
             benchmark.cleanup_test_objects().await?;
         }
     }

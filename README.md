@@ -61,6 +61,21 @@ Example:
     --tests small_files_1kb --tests large_files_1gb
 ```
 
+### Region Selection
+You can specify the IBM COS region using the `--region` argument (default: eu-de):
+
+Example:
+```sh
+./target/release/cos-benchmark benchmark \
+    --endpoint https://s3.eu-de.cloud-object-storage.appdomain.cloud \
+    --access-key <ACCESS_KEY> \
+    --secret-key <SECRET_KEY> \
+    --bucket <BUCKET_NAME> \
+    --prefix benchmark \
+    --duration 60 \
+    --region eu-de
+```
+
 ## Example Output
 ```
 🏗️ IBM Cloud Object Storage Benchmark Starting...
