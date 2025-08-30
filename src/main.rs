@@ -21,10 +21,10 @@ const MB: usize = 1024 * KB;
 const GB: usize = 1024 * MB;
 use sysinfo::System;
 
-/// IBM Cloud Object Storage Kubernetes Throughput Benchmark CLI arguments
+/// S3-Compatible Object Storage Benchmark CLI arguments
 #[derive(Parser)]
-#[command(name = "cos-benchmark")]
-#[command(about = "IBM Cloud Object Storage Kubernetes Throughput Benchmark")]
+#[command(name = "object-storage-benchmark")]
+#[command(about = "Generic S3-Compatible Object Storage Benchmark for Kubernetes and cloud environments")]
 struct Args {
     /// Subcommand to run (benchmark or cleanup)
     #[command(subcommand)]
@@ -36,7 +36,7 @@ struct Args {
 enum Commands {
     /// Run comprehensive benchmark suite
     Benchmark {
-    #[arg(long, help = "IBM COS endpoint URL")]
+    #[arg(long, help = "S3-compatible object storage endpoint URL")]
     endpoint: String,
     #[arg(long, help = "Access key ID")]
     access_key: String,
@@ -57,16 +57,16 @@ enum Commands {
     },
     /// Clean up test objects
     Cleanup {
-        #[arg(long)]
-        endpoint: String,
-        #[arg(long)]
-        access_key: String,
-        #[arg(long)]
-        secret_key: String,
-        #[arg(long)]
-        bucket: String,
-        #[arg(long, default_value = "benchmark")]
-        prefix: String,
+    #[arg(long)]
+    endpoint: String,
+    #[arg(long)]
+    access_key: String,
+    #[arg(long)]
+    secret_key: String,
+    #[arg(long)]
+    bucket: String,
+    #[arg(long, default_value = "benchmark")]
+    prefix: String,
     },
 }
 
@@ -167,7 +167,7 @@ struct BenchmarkSuite {
 
 impl BenchmarkSuite {
     async fn new(endpoint: &str, access_key: &str, secret_key: &str, bucket: &str, prefix: &str, region: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
-        // Configure S3 client for IBM COS
+        // Configure S3 client for generic S3-compatible object storage
         let credentials = Credentials::new(access_key, secret_key, None, None, "benchmark");
         
         let config = ConfigBuilder::new()
@@ -239,14 +239,14 @@ impl BenchmarkSuite {
     }
 
     async fn run_comprehensive_benchmark(&self, duration: u64, tests: Option<Vec<String>>) -> Result<BenchmarkReport, Box<dyn std::error::Error>> {
-        println!("🚀 Starting IBM COS Kubernetes Throughput Benchmark");
+    println!("🚀 Starting S3-Compatible Object Storage Benchmark");
         println!("📊 System Info: {} CPUs, {:.1} GB RAM", 
                  self.system_info.cpu_count, 
                  self.system_info.total_memory as f64 / 1024.0 / 1024.0 / 1024.0);
         
         let mut results = Vec::new();
         
-        // Test scenarios with different file sizes and concurrency levels
+    // Test scenarios with different file sizes and concurrency levels
         let test_scenarios = vec![
             ("small_files_1kb", 1 * KB as u64, vec![1, 5, 10, 20]),
             ("small_files_64kb", 64 * KB as u64, vec![1, 5, 10, 20]),
@@ -660,9 +660,9 @@ impl BenchmarkSuite {
     }
 
     async fn run_parallel_upload_download_test(&self, duration: u64) -> Result<BenchmarkResult, Box<dyn std::error::Error>> {
-        println!("\n🔥 Running parallel upload/download stress test");
+    println!("\n🔥 Running parallel upload/download stress test");
         
-        let file_size = 4 * 1024 * 1024; // 4MB per IBM COS best practices
+    let file_size = 4 * 1024 * 1024; // 4MB per S3 best practices
         let data = vec![0u8; file_size];
         let upload_concurrency = 50;
         let download_concurrency = 50;
@@ -1011,7 +1011,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let benchmark = BenchmarkSuite::new(&endpoint, &access_key, &secret_key, &bucket, &prefix, region).await?;
 
-            println!("🏗️ IBM Cloud Object Storage Benchmark Starting...");
+            println!("🏗️ S3-Compatible Object Storage Benchmark Starting...");
             println!("📍 Endpoint: {}", endpoint);
             println!("🪣 Bucket: {}", bucket);
             println!("⏱️ Duration: {}s per test", duration);
@@ -1071,7 +1071,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Save detailed report to JSON
             let report_json = serde_json::to_string_pretty(&report)?;
-            let report_filename = format!("cos_benchmark_report_{}.json",
+            let report_filename = format!("object_storage_benchmark_report_{}.json",
                                         chrono::Utc::now().format("%Y%m%d_%H%M%S"));
             std::fs::write(&report_filename, report_json)?;
             println!("\n💾 Detailed report saved to: {}", report_filename);

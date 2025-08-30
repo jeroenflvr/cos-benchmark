@@ -1,6 +1,6 @@
-# IBM COS Benchmark
+# S3-Compatible Object Storage Benchmark
 
-A Rust-based tool to benchmark IBM Cloud Object Storage throughput and latency, designed for Kubernetes environments.
+A Rust-based tool to benchmark any S3-compatible object storage (AWS S3, IBM COS, MinIO, Wasabi, etc.) throughput and latency, designed for Kubernetes and cloud environments.
 
 ## Features
 - Upload/download tests for small, medium, and large files
@@ -18,23 +18,23 @@ cargo build --release
 
 ### Run Benchmark
 ```sh
-./target/release/cos-benchmark benchmark \
-    --endpoint https://s3.eu-de.cloud-object-storage.appdomain.cloud \
-    --access-key <ACCESS_KEY> \
-    --secret-key <SECRET_KEY> \
-    --bucket <BUCKET_NAME> \
-    --prefix benchmark \
-    --duration 60
+./target/release/object-storage-benchmark benchmark \
+  --endpoint <S3_ENDPOINT_URL> \
+  --access-key <ACCESS_KEY> \
+  --secret-key <SECRET_KEY> \
+  --bucket <BUCKET_NAME> \
+  --prefix benchmark \
+  --duration 60
 ```
 
 ### Run Cleanup
 ```sh
-./target/release/cos-benchmark cleanup \
-    --endpoint https://s3.eu-de.cloud-object-storage.appdomain.cloud \
-    --access-key <ACCESS_KEY> \
-    --secret-key <SECRET_KEY> \
-    --bucket <BUCKET_NAME> \
-    --prefix benchmark
+./target/release/object-storage-benchmark cleanup \
+  --endpoint <S3_ENDPOINT_URL> \
+  --access-key <ACCESS_KEY> \
+  --secret-key <SECRET_KEY> \
+  --bucket <BUCKET_NAME> \
+  --prefix benchmark
 ```
 
 ### Select Specific Tests
@@ -51,34 +51,34 @@ Available test names:
 
 Example:
 ```sh
-./target/release/cos-benchmark benchmark \
-    --endpoint https://s3.eu-de.cloud-object-storage.appdomain.cloud \
-    --access-key <ACCESS_KEY> \
-    --secret-key <SECRET_KEY> \
-    --bucket <BUCKET_NAME> \
-    --prefix benchmark \
-    --duration 60 \
-    --tests small_files_1kb --tests large_files_1gb
+./target/release/object-storage-benchmark benchmark \
+  --endpoint <S3_ENDPOINT_URL> \
+  --access-key <ACCESS_KEY> \
+  --secret-key <SECRET_KEY> \
+  --bucket <BUCKET_NAME> \
+  --prefix benchmark \
+  --duration 60 \
+  --tests small_files_1kb --tests large_files_1gb
 ```
 
 ### Region Selection
-You can specify the IBM COS region using the `--region` argument (default: eu-de):
+You can specify the region using the `--region` argument (default: eu-de):
 
 Example:
 ```sh
-./target/release/cos-benchmark benchmark \
-    --endpoint https://s3.eu-de.cloud-object-storage.appdomain.cloud \
-    --access-key <ACCESS_KEY> \
-    --secret-key <SECRET_KEY> \
-    --bucket <BUCKET_NAME> \
-    --prefix benchmark \
-    --duration 60 \
-    --region eu-de
+./target/release/object-storage-benchmark benchmark \
+  --endpoint <S3_ENDPOINT_URL> \
+  --access-key <ACCESS_KEY> \
+  --secret-key <SECRET_KEY> \
+  --bucket <BUCKET_NAME> \
+  --prefix benchmark \
+  --duration 60 \
+  --region eu-de
 ```
 
 ## Example Output
 ```
-🏗️ IBM Cloud Object Storage Benchmark Starting...
+🏗️ S3-Compatible Object Storage Benchmark Starting...
 📍 Endpoint: https://s3.eu-de.cloud-object-storage.appdomain.cloud
 🪣 Bucket: my-bucket
 ⏱️ Duration: 60s per test
@@ -98,19 +98,19 @@ Example:
 🌐 Network Saturation: 9.6%
 
 💡 RECOMMENDATIONS:
-  1. Low throughput detected - check node network interface speed and COS endpoint proximity
+  1. Low throughput detected - check node network interface speed and endpoint proximity
   2. Optimal concurrency level appears to be around 20 threads
 
-💾 Detailed report saved to: cos_benchmark_report_20250830_153000.json
+💾 Detailed report saved to: object_storage_benchmark_report_20250830_153000.json
 ```
 
 ## Notes
 - For best results, run in a dedicated pod or node with sufficient resources.
-- The tool requires valid IBM COS credentials and bucket access.
+- The tool requires valid S3-compatible credentials and bucket access.
 - Reports are saved as JSON for further analysis.
 
 ## Help
 Run with `--help` for detailed CLI options:
 ```sh
-./target/release/cos-benchmark --help
+./target/release/object-storage-benchmark --help
 ```
