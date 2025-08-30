@@ -1,3 +1,4 @@
 /target
 tmp/
 cos_benchmark_report*
+.env
