@@ -37,6 +37,30 @@ cargo build --release
     --prefix benchmark
 ```
 
+### Select Specific Tests
+You can use the `--tests` argument to run only specific benchmark scenarios. Repeat the argument for multiple tests:
+
+Available test names:
+- small_files_1kb
+- small_files_64kb
+- medium_files_1mb
+- medium_files_16mb
+- large_files_100mb
+- large_files_1gb
+- mixed_workload
+
+Example:
+```sh
+./target/release/cos-benchmark benchmark \
+    --endpoint https://s3.eu-de.cloud-object-storage.appdomain.cloud \
+    --access-key <ACCESS_KEY> \
+    --secret-key <SECRET_KEY> \
+    --bucket <BUCKET_NAME> \
+    --prefix benchmark \
+    --duration 60 \
+    --tests small_files_1kb --tests large_files_1gb
+```
+
 ## Example Output
 ```
 🏗️ IBM Cloud Object Storage Benchmark Starting...

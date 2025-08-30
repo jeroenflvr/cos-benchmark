@@ -10,38 +10,47 @@ use clap::{Parser, Subcommand};
 use uuid::Uuid;
 use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
-use rand::Rng;
 use rand::SeedableRng;
-use rand::prelude::IndexedRandom;
-use rayon::prelude::*;
+// ...existing code...
+/// 1 Kilobyte
+const KB: usize = 1024;
+/// 1 Megabyte
+const MB: usize = 1024 * KB;
+/// 1 Gigabyte
+const GB: usize = 1024 * MB;
 use sysinfo::System;
 
+/// IBM Cloud Object Storage Kubernetes Throughput Benchmark CLI arguments
 #[derive(Parser)]
 #[command(name = "cos-benchmark")]
 #[command(about = "IBM Cloud Object Storage Kubernetes Throughput Benchmark")]
 struct Args {
+    /// Subcommand to run (benchmark or cleanup)
     #[command(subcommand)]
     command: Commands,
 }
 
+/// CLI subcommands for cos-benchmark
 #[derive(Subcommand)]
 enum Commands {
     /// Run comprehensive benchmark suite
     Benchmark {
-        #[arg(long, help = "IBM COS endpoint URL")]
-        endpoint: String,
-        #[arg(long, help = "Access key ID")]
-        access_key: String,
-        #[arg(long, help = "Secret access key")]
-        secret_key: String,
-        #[arg(long, help = "Bucket name")]
-        bucket: String,
-        #[arg(long, default_value = "benchmark", help = "Test prefix")]
-        prefix: String,
-        #[arg(long, default_value = "60", help = "Test duration in seconds")]
-        duration: u64,
-        #[arg(long, default_value = "false", help = "Skip cleanup after tests")]
-        skip_cleanup: bool,
+    #[arg(long, help = "IBM COS endpoint URL")]
+    endpoint: String,
+    #[arg(long, help = "Access key ID")]
+    access_key: String,
+    #[arg(long, help = "Secret access key")]
+    secret_key: String,
+    #[arg(long, help = "Bucket name")]
+    bucket: String,
+    #[arg(long, default_value = "benchmark", help = "Test prefix")]
+    prefix: String,
+    #[arg(long, default_value = "60", help = "Test duration in seconds")]
+    duration: u64,
+    #[arg(long, help = "Select which tests to run (repeat for multiple). Available tests: small_files_1kb, small_files_64kb, medium_files_1mb, medium_files_16mb, large_files_100mb, large_files_1gb, mixed_workload", value_delimiter = None, num_args = 0.., default_value = None)]
+    tests: Option<Vec<String>>,
+    #[arg(long, default_value = "false", help = "Skip cleanup after tests")]
+    skip_cleanup: bool,
     },
     /// Clean up test objects
     Cleanup {
@@ -58,6 +67,7 @@ enum Commands {
     },
 }
 
+/// Results of a single benchmark test
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BenchmarkResult {
     test_name: String,
@@ -73,6 +83,7 @@ struct BenchmarkResult {
     errors: u64,
 }
 
+/// System information collected for the benchmark
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SystemInfo {
     hostname: String,
@@ -84,6 +95,7 @@ struct SystemInfo {
     kubernetes_info: KubernetesInfo,
 }
 
+/// Network interface statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkInterface {
     name: String,
@@ -91,6 +103,7 @@ struct NetworkInterface {
     transmitted_bytes: u64,
 }
 
+/// Kubernetes pod and resource info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KubernetesInfo {
     pod_name: Option<String>,
@@ -100,18 +113,21 @@ struct KubernetesInfo {
     requests: ResourceRequests,
 }
 
+/// Resource limits from Kubernetes Downward API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ResourceLimits {
     memory: Option<String>,
     cpu: Option<String>,
 }
 
+/// Resource requests from Kubernetes Downward API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ResourceRequests {
     memory: Option<String>,
     cpu: Option<String>,
 }
 
+/// Full benchmark report including summary and system info
 #[derive(Debug, Serialize, Deserialize)]
 struct BenchmarkReport {
     timestamp: String,
@@ -120,6 +136,7 @@ struct BenchmarkReport {
     summary: BenchmarkSummary,
 }
 
+/// Summary statistics for a benchmark run
 #[derive(Debug, Serialize, Deserialize)]
 struct BenchmarkSummary {
     max_throughput_mbps: f64,
@@ -128,6 +145,7 @@ struct BenchmarkSummary {
     recommendations: Vec<String>,
 }
 
+/// Bottleneck analysis and resource utilization
 #[derive(Debug, Serialize, Deserialize)]
 struct BottleneckAnalysis {
     likely_bottleneck: String,
@@ -182,7 +200,7 @@ impl BenchmarkSuite {
         SystemInfo {
             hostname,
             cpu_count: system.cpus().len(),
-            cpu_frequency: system.cpus().first().map(|cpu| cpu.frequency()).unwrap_or(0),
+            cpu_frequency: system.cpus().first().map(|cpu| cpu.frequency()).unwrap_or_default(),
             total_memory: system.total_memory(),
             available_memory: system.available_memory(),
             network_interfaces,
@@ -216,7 +234,7 @@ impl BenchmarkSuite {
         }
     }
 
-    async fn run_comprehensive_benchmark(&self, duration: u64) -> Result<BenchmarkReport, Box<dyn std::error::Error>> {
+    async fn run_comprehensive_benchmark(&self, duration: u64, tests: Option<Vec<String>>) -> Result<BenchmarkReport, Box<dyn std::error::Error>> {
         println!("🚀 Starting IBM COS Kubernetes Throughput Benchmark");
         println!("📊 System Info: {} CPUs, {:.1} GB RAM", 
                  self.system_info.cpu_count, 
@@ -226,23 +244,25 @@ impl BenchmarkSuite {
         
         // Test scenarios with different file sizes and concurrency levels
         let test_scenarios = vec![
-            // Small files (simulating metadata-heavy workloads)
-            ("small_files_1kb", 1024, vec![1, 5, 10, 20]),
-            ("small_files_64kb", 64 * 1024, vec![1, 5, 10, 20]),
-            
-            // Medium files (typical application files)
-            ("medium_files_1mb", 1024 * 1024, vec![1, 5, 10, 20, 50]),
-            ("medium_files_16mb", 16 * 1024 * 1024, vec![1, 5, 10, 20]),
-            
-            // Large files (big data, ML models)
-            ("large_files_100mb", 100 * 1024 * 1024, vec![1, 5, 10]),
-            ("large_files_1gb", 1024 * 1024 * 1024, vec![1, 2, 5]),
-            
-            // Mixed workload simulation
-            ("mixed_workload", 0, vec![10]), // Special case handled separately
+            ("small_files_1kb", 1 * KB as u64, vec![1, 5, 10, 20]),
+            ("small_files_64kb", 64 * KB as u64, vec![1, 5, 10, 20]),
+            ("medium_files_1mb", 1 * MB as u64, vec![1, 5, 10, 20, 50]),
+            ("medium_files_16mb", 16 * MB as u64, vec![1, 5, 10, 20]),
+            ("large_files_100mb", 100 * MB as u64, vec![1, 5, 10]),
+            ("large_files_1gb", 1 * GB as u64, vec![1, 2, 5]),
+            ("mixed_workload", 0, vec![10]),
         ];
 
-        for (test_name, file_size, concurrency_levels) in test_scenarios {
+        // Filter scenarios if tests argument is provided
+        let filtered_scenarios: Vec<_> = if let Some(ref tests) = tests {
+            test_scenarios.into_iter()
+                .filter(|(name, _, _)| tests.contains(&name.to_string()))
+                .collect()
+        } else {
+            test_scenarios
+        };
+
+    for (test_name, file_size, concurrency_levels) in filtered_scenarios {
             println!("\n🔥 Running test: {}", test_name);
             
             if test_name == "mixed_workload" {
@@ -287,7 +307,7 @@ impl BenchmarkSuite {
 
     async fn run_small_file_test(&self, test_name: &str, file_size: u64, concurrency: usize, duration: u64) -> Result<BenchmarkResult, Box<dyn std::error::Error>> {
     println!("[DEBUG] run_small_file_test: file_size={} concurrency={}", file_size, concurrency);
-        let data = vec![0u8; file_size as usize];
+    let data = vec![0u8; file_size as usize]; // Small buffer, cheap to clone
         let semaphore = Arc::new(Semaphore::new(concurrency));
         let mut latencies = Vec::new();
         let mut operations = 0u64;
@@ -373,8 +393,8 @@ impl BenchmarkSuite {
     async fn run_large_file_test(&self, test_name: &str, file_size: u64, concurrency: usize, duration: u64) -> Result<BenchmarkResult, Box<dyn std::error::Error>> {
     println!("[DEBUG] run_large_file_test: file_size={} concurrency={}", file_size, concurrency);
         // For large files, use multipart upload for better performance
-        let chunk_size = 8 * 1024 * 1024; // 8MB chunks (multiple of 4MB as recommended)
-        let data_chunk = vec![0u8; chunk_size];
+    let chunk_size = 8 * MB;
+    let data_chunk = vec![0u8; chunk_size];
         let chunks_per_file = (file_size + chunk_size as u64 - 1) / chunk_size as u64;
         
         let semaphore = Arc::new(Semaphore::new(concurrency));
@@ -602,11 +622,11 @@ impl BenchmarkSuite {
         let upload_semaphore = Arc::new(Semaphore::new(upload_concurrency));
         let download_semaphore = Arc::new(Semaphore::new(download_concurrency));
         
-        let mut upload_latencies = Vec::new();
-        let mut download_latencies = Vec::new();
-        let mut upload_ops = 0u64;
-        let mut download_ops = 0u64;
-        let mut errors = 0u64;
+    let mut upload_latencies = Vec::new();
+    let mut download_latencies = Vec::new();
+    let mut upload_ops = 0u64;
+    let mut download_ops = 0u64;
+    let mut errors = 0u64;
         
         let start_time = Instant::now();
         let end_time = start_time + Duration::from_secs(duration);
@@ -914,31 +934,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     
     match args.command {
-        Commands::Benchmark { 
-            endpoint, 
-            access_key, 
-            secret_key, 
-            bucket, 
-            prefix, 
+        Commands::Benchmark {
+            endpoint,
+            access_key,
+            secret_key,
+            bucket,
+            prefix,
             duration,
-            skip_cleanup 
+            tests,
+            skip_cleanup,
         } => {
             let benchmark = BenchmarkSuite::new(&endpoint, &access_key, &secret_key, &bucket, &prefix).await?;
-            
+
             println!("🏗️ IBM Cloud Object Storage Benchmark Starting...");
             println!("📍 Endpoint: {}", endpoint);
             println!("🪣 Bucket: {}", bucket);
             println!("⏱️ Duration: {}s per test", duration);
-            
+
             if let Some(pod_name) = &benchmark.system_info.kubernetes_info.pod_name {
                 println!("🚢 Running in Kubernetes pod: {}", pod_name);
                 if let Some(node_name) = &benchmark.system_info.kubernetes_info.node_name {
                     println!("🖥️  Node: {}", node_name);
                 }
             }
-            
-            let report = benchmark.run_comprehensive_benchmark(duration).await?;
-            
+
+            let report = benchmark.run_comprehensive_benchmark(duration, tests).await?;
+
             // Print summary
             println!("\n📈 BENCHMARK RESULTS SUMMARY");
             println!("═══════════════════════════════");
@@ -948,18 +969,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("💾 CPU Utilization: {:.1}%", report.summary.bottleneck_analysis.cpu_utilization);
             println!("🧠 Memory Utilization: {:.1}%", report.summary.bottleneck_analysis.memory_utilization);
             println!("🌐 Network Saturation: {:.1}%", report.summary.bottleneck_analysis.network_saturation_estimate);
-            
+
             println!("\n💡 RECOMMENDATIONS:");
             for (i, rec) in report.summary.recommendations.iter().enumerate() {
                 println!("  {}. {}", i + 1, rec);
             }
-            
+
             // Detailed results
             println!("\n📋 DETAILED RESULTS:");
-            println!("{:<30} | {:>8} | {:>6} | {:>10} | {:>8} | {:>8} | {:>6}", 
+            println!("{:<30} | {:>8} | {:>6} | {:>10} | {:>8} | {:>8} | {:>6}",
                      "Test", "FileSize", "Threads", "Throughput", "Ops/sec", "AvgLat", "Errors");
             println!("{}", "─".repeat(90));
-            
+
             for result in &report.results {
                 let size_str = if result.file_size == 0 {
                     "Mixed".to_string()
@@ -972,8 +993,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     format!("{}GB", result.file_size / 1024 / 1024 / 1024)
                 };
-                
-                println!("{:<30} | {:>8} | {:>6} | {:>8.1} MB/s | {:>6.1} | {:>6.1}ms | {:>6}", 
+
+                println!("{:<30} | {:>8} | {:>6} | {:>8.1} MB/s | {:>6.1} | {:>6.1}ms | {:>6}",
                          result.test_name,
                          size_str,
                          result.concurrent_operations,
@@ -982,14 +1003,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                          result.avg_latency_ms,
                          result.errors);
             }
-            
+
             // Save detailed report to JSON
             let report_json = serde_json::to_string_pretty(&report)?;
-            let report_filename = format!("cos_benchmark_report_{}.json", 
+            let report_filename = format!("cos_benchmark_report_{}.json",
                                         chrono::Utc::now().format("%Y%m%d_%H%M%S"));
             std::fs::write(&report_filename, report_json)?;
             println!("\n💾 Detailed report saved to: {}", report_filename);
-            
+
             // Cleanup unless requested to skip
             if !skip_cleanup {
                 benchmark.cleanup_test_objects().await?;
